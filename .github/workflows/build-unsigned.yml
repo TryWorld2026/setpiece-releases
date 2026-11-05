@@ -1,0 +1,206 @@
+name: Build unsigned desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Private Setpiece tag to build
+        required: true
+        default: v0.3.3
+
+permissions:
+  contents: write
+
+concurrency:
+  group: unsigned-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  macos-arm64:
+    name: macOS Apple Silicon
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: TryWorld2026/setpiece-private
+          ref: ${{ inputs.tag }}
+          ssh-key: ${{ secrets.SETPIECE_PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/release-preflight.mjs
+      - name: Build unsigned Apple Silicon installer
+        run: pnpm --filter setpiece-desktop release --arch=arm64 --official --unsigned
+      - name: Verify Apple Silicon app
+        shell: bash
+        run: |
+          version="$(node -p "require('./packages/openfilm/package.json').version")"
+          app="apps/desktop/.release/arm64/out/mac-arm64/Setpiece.app"
+          test -d "$app"
+          test ! -e "$app/Contents/Resources/app-update.yml"
+          test -s "$app/Contents/Resources/LICENSE"
+          test -s "$app/Contents/Resources/NOTICE.md"
+          test -s "$app/Contents/Resources/THIRD_PARTY_NOTICES.md"
+          test -s "$app/Contents/Resources/LICENSES/OpenFilm-MIT.txt"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$version"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$app/Contents/Info.plist")" = "Setpiece"
+          hdiutil verify apps/desktop/.release/arm64/out/Setpiece-arm64.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-macos-arm64
+          if-no-files-found: error
+          path: |
+            apps/desktop/.release/arm64/out/*.dmg
+            apps/desktop/.release/arm64/out/*.zip
+
+  macos-x64:
+    name: macOS Intel
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: TryWorld2026/setpiece-private
+          ref: ${{ inputs.tag }}
+          ssh-key: ${{ secrets.SETPIECE_PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/release-preflight.mjs
+      - name: Build unsigned Intel installer
+        run: pnpm --filter setpiece-desktop release --arch=x64 --official --unsigned
+      - name: Verify Intel app
+        shell: bash
+        run: |
+          version="$(node -p "require('./packages/openfilm/package.json').version")"
+          app="apps/desktop/.release/x64/out/mac/Setpiece.app"
+          test -d "$app"
+          test ! -e "$app/Contents/Resources/app-update.yml"
+          test -s "$app/Contents/Resources/LICENSE"
+          test -s "$app/Contents/Resources/NOTICE.md"
+          test -s "$app/Contents/Resources/THIRD_PARTY_NOTICES.md"
+          test -s "$app/Contents/Resources/LICENSES/OpenFilm-MIT.txt"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$version"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$app/Contents/Info.plist")" = "Setpiece"
+          hdiutil verify apps/desktop/.release/x64/out/Setpiece-x64.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-macos-x64
+          if-no-files-found: error
+          path: |
+            apps/desktop/.release/x64/out/*.dmg
+            apps/desktop/.release/x64/out/*.zip
+
+  windows-x64:
+    name: Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: TryWorld2026/setpiece-private
+          ref: ${{ inputs.tag }}
+          ssh-key: ${{ secrets.SETPIECE_PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/release-preflight.mjs
+      - name: Build unsigned Windows installer
+        shell: pwsh
+        run: pnpm --filter setpiece-desktop release --platform=win --arch=x64 --official --unsigned
+      - name: Verify Windows installer
+        shell: pwsh
+        run: |
+          $version = node -p "require('./packages/openfilm/package.json').version"
+          $installer = 'apps\desktop\.release\win-x64\out\Setpiece-Setup-x64.exe'
+          $unpacked = 'apps\desktop\.release\win-x64\out\win-unpacked'
+          if (-not (Test-Path -LiteralPath $installer)) { throw 'Windows installer is missing' }
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer
+          if ($signature.Status -ne 'NotSigned') { throw "Expected NotSigned, got $($signature.Status)" }
+          $productVersion = (Get-Item -LiteralPath $installer).VersionInfo.ProductVersion
+          if ($productVersion -ne $version) { throw "Unexpected product version: $productVersion" }
+          foreach ($file in @(
+            'resources\LICENSE',
+            'resources\NOTICE.md',
+            'resources\THIRD_PARTY_NOTICES.md',
+            'resources\LICENSES\OpenFilm-MIT.txt'
+          )) {
+            if (-not (Test-Path -LiteralPath (Join-Path $unpacked $file))) { throw "Missing $file" }
+          }
+          if (Test-Path -LiteralPath (Join-Path $unpacked 'resources\app-update.yml')) {
+            throw 'Manual-update build unexpectedly contains app-update.yml'
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-windows-x64
+          if-no-files-found: error
+          path: apps/desktop/.release/win-x64/out/*.exe
+
+  publish:
+    name: Publish installers
+    needs: [macos-arm64, macos-x64, windows-x64]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: unsigned-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        shell: bash
+        run: |
+          cd dist
+          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 \
+            | sort -z \
+            | xargs -0 sha256sum \
+            | sed 's#  \./#  #' > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Create the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release $TAG already exists"
+            exit 1
+          fi
+          cat > "$RUNNER_TEMP/notes.md" <<EOF
+          **Setpiece ${TAG#v} for Desktop**
+
+          未签名桌面版是当前正式发布通道，包含项目库、完整编辑工作台、检查器、AI 助理与手动更新提醒。
+
+          - macOS 13+ / Apple Silicon：DMG / ZIP
+          - macOS 13+ / Intel：DMG / ZIP
+          - Windows 10 / 11 / x64：EXE
+          - 安装包未签名。macOS 首次打开可能被 Gatekeeper 阻止；Windows SmartScreen 可能显示未知发布者。
+          - 新版本发布后应用内提示，并打开第一方下载页面；不会自动下载或安装。
+
+          许可证与第三方声明随安装包分发。
+          EOF
+          mapfile -d '' files < <(find dist -maxdepth 1 -type f -print0)
+          gh release create "$TAG" "${files[@]}" \
+            --latest \
+            --title "Setpiece ${TAG#v} · macOS + Windows" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            -R "$GITHUB_REPOSITORY"
