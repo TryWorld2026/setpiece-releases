@@ -188,13 +188,13 @@ jobs:
           cat > "$RUNNER_TEMP/notes.md" <<EOF
           **Setpiece ${TAG#v} for Desktop**
 
-          未签名桌面版是当前正式发布通道，包含项目库、完整编辑工作台、检查器、AI 助理与手动更新提醒。
+          未签名桌面版是当前正式发布通道，包含项目库、完整编辑工作台、检查器、AI 助理与应用内更新。
 
           - macOS 13+ / Apple Silicon：DMG / ZIP
           - macOS 13+ / Intel：DMG / ZIP
           - Windows 10 / 11 / x64：EXE
           - 安装包未签名。macOS 首次打开可能被 Gatekeeper 阻止；Windows SmartScreen 可能显示未知发布者。
-          - 新版本发布后应用内提示，并打开第一方下载页面；不会自动下载或安装。
+          - 应用内检测到新版本后，点击「更新」即可下载安装包、校验 SHA256，并重启完成安装。
 
           许可证与第三方声明随安装包分发。
           EOF
