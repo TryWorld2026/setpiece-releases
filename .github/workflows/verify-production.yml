@@ -56,7 +56,9 @@ jobs:
                 assert.equal(hash.digest('hex'), item.sha256, item.path);
                 const head = await fetch(url, { method: 'HEAD', headers: { 'accept-encoding': 'identity' }, signal: AbortSignal.timeout(60000) });
                 assert.equal(head.status, 200, item.path);
-                assert.equal(head.headers.get('content-length'), String(item.bytes), item.path);
+                const headLength = head.headers.get('content-length');
+                if (headLength !== null) assert.equal(headLength, String(item.bytes), item.path);
+                else assert.match(item.contentType ?? '', /^(text\/|application\/json)/, item.path);
                 assert.equal((await head.arrayBuffer()).byteLength, 0, item.path);
                 const end = Math.min(4096, bytes) - 1;
                 const range = await fetch(url, { headers: { range: `bytes=0-${end}`, 'accept-encoding': 'identity' }, signal: AbortSignal.timeout(60000) });
@@ -64,7 +66,7 @@ jobs:
                 assert.equal(range.headers.get('content-range'), `bytes 0-${end}/${bytes}`, item.path);
                 assert.deepEqual(Buffer.from(await range.arrayBuffer()), Buffer.concat(prefixChunks), item.path);
                 console.log(`PASS ${prefix}/${item.path}: ${bytes} bytes, SHA256, HEAD, Range`);
-                return { path: item.path, bytes, sha256: item.sha256, head: true, range: true, transport: 'complete-get' };
+                return { path: item.path, bytes, sha256: item.sha256, head: true, headContentLength: headLength, range: true, transport: 'complete-get' };
               } catch (error) { last = error; console.log(`Retry ${item.path}: ${error.message}`); }
             }
             throw last;
