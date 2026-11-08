@@ -27,6 +27,17 @@ jobs:
           ref: ${{ inputs.tag }}
           ssh-key: ${{ secrets.SETPIECE_PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: TryWorld2026/setpiece-private
+          ref: bd35fbb8f4af0d67523780474de789047bf73ba2
+          path: .acceptance-tools
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            scripts/accept-macos-app.mjs
+            scripts/macos-app-acceptance.test.mjs
+          ssh-key: ${{ secrets.SETPIECE_PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
       - uses: pnpm/action-setup@v4
         with:
           version: 9.15.9
@@ -56,7 +67,7 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$app/Contents/Info.plist")" = "Setpiece"
           hdiutil verify apps/desktop/.release/arm64/out/Setpiece-arm64.dmg
       - name: Check macOS acceptance guards
-        run: node --test scripts/macos-app-acceptance.test.mjs
+        run: node --test .acceptance-tools/scripts/macos-app-acceptance.test.mjs
       - name: Accept native Apple Silicon app from the disk image
         shell: bash
         run: |
@@ -65,7 +76,7 @@ jobs:
           version="$(node -p "require('./apps/desktop/package.json').version")"
           dmg="apps/desktop/.release/arm64/out/Setpiece-arm64.dmg"
           hash="$(shasum -a 256 "$dmg" | cut -d ' ' -f 1)"
-          node scripts/accept-macos-app.mjs \
+          node .acceptance-tools/scripts/accept-macos-app.mjs \
             --app apps/desktop/.release/arm64/out/mac-arm64/Setpiece.app \
             --dmg "$dmg" --dmg-sha256 "$hash" --arch arm64 --version "$version" \
             --work-root "$work" --execute
@@ -97,6 +108,17 @@ jobs:
           ref: ${{ inputs.tag }}
           ssh-key: ${{ secrets.SETPIECE_PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: TryWorld2026/setpiece-private
+          ref: bd35fbb8f4af0d67523780474de789047bf73ba2
+          path: .acceptance-tools
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            scripts/accept-macos-app.mjs
+            scripts/macos-app-acceptance.test.mjs
+          ssh-key: ${{ secrets.SETPIECE_PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
       - uses: pnpm/action-setup@v4
         with:
           version: 9.15.9
@@ -126,7 +148,7 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$app/Contents/Info.plist")" = "Setpiece"
           hdiutil verify apps/desktop/.release/x64/out/Setpiece-x64.dmg
       - name: Check macOS acceptance guards
-        run: node --test scripts/macos-app-acceptance.test.mjs
+        run: node --test .acceptance-tools/scripts/macos-app-acceptance.test.mjs
       - name: Accept native Intel app from the disk image
         shell: bash
         run: |
@@ -135,7 +157,7 @@ jobs:
           version="$(node -p "require('./apps/desktop/package.json').version")"
           dmg="apps/desktop/.release/x64/out/Setpiece-x64.dmg"
           hash="$(shasum -a 256 "$dmg" | cut -d ' ' -f 1)"
-          node scripts/accept-macos-app.mjs \
+          node .acceptance-tools/scripts/accept-macos-app.mjs \
             --app apps/desktop/.release/x64/out/mac/Setpiece.app \
             --dmg "$dmg" --dmg-sha256 "$hash" --arch x64 --version "$version" \
             --work-root "$work" --execute
@@ -165,6 +187,17 @@ jobs:
         with:
           repository: TryWorld2026/setpiece-private
           ref: ${{ inputs.tag }}
+          ssh-key: ${{ secrets.SETPIECE_PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: TryWorld2026/setpiece-private
+          ref: bd35fbb8f4af0d67523780474de789047bf73ba2
+          path: .acceptance-tools
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            scripts/accept-windows-installer.ps1
+            scripts/windows-installer-acceptance.test.mjs
           ssh-key: ${{ secrets.SETPIECE_PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - uses: pnpm/action-setup@v4
@@ -203,7 +236,7 @@ jobs:
           }
       - name: Check installer acceptance guards
         shell: pwsh
-        run: node --test scripts/windows-installer-acceptance.test.mjs
+        run: node --test .acceptance-tools/scripts/windows-installer-acceptance.test.mjs
       - name: Accept Windows install, upgrade and uninstall
         shell: pwsh
         run: |
@@ -217,7 +250,7 @@ jobs:
           $version = (Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json).version
           $work = Join-Path $env:RUNNER_TEMP ('setpiece-install-' + [guid]::NewGuid().ToString('N'))
           "SETPIECE_INSTALL_ACCEPTANCE=$work" >> $env:GITHUB_ENV
-          & ./scripts/accept-windows-installer.ps1 `
+          & ./.acceptance-tools/scripts/accept-windows-installer.ps1 `
             -Baseline $baseline `
             -BaselineSha256 f7570fea11d4fb88c44eacedfaf7bf57c24ddd7e0d2dfeb4b26be0a47ae2cb9e `
             -Candidate $candidate -CandidateSha256 $candidateHash `
