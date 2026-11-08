@@ -1,0 +1,119 @@
+name: Verify published first-party downloads
+on:
+  workflow_dispatch:
+    inputs:
+      expected:
+        description: Reviewed manifest, installer digests and library samples as JSON
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify complete production downloads
+        shell: bash
+        env:
+          REVIEWED_RELEASE: ${{ inputs.expected }}
+        run: |
+          cd "$RUNNER_TEMP"
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { createHash } from 'node:crypto';
+          import { writeFile } from 'node:fs/promises';
+          const expected = JSON.parse(process.env.REVIEWED_RELEASE);
+          const origin = 'https://setpiece.tryworld.com.cn';
+          const report = { version: expected.feed.version, run: process.env.GITHUB_RUN_ID, startedAt: new Date().toISOString(), passed: false, downloads: [], library: [], errors: [] };
+          const save = () => writeFile('setpiece-production-verification.json', `${JSON.stringify(report, null, 2)}\n`);
+          async function verify(item, prefix) {
+            let last;
+            for (let attempt = 0; attempt < 3; attempt++) {
+              try {
+                const url = `${origin}/${prefix}/${item.path}`;
+                const response = await fetch(url, { redirect: 'error', headers: { 'accept-encoding': 'identity' }, signal: AbortSignal.timeout(5 * 60_000) });
+                assert.equal(response.status, 200, item.path);
+                if (item.contentType) assert.equal(response.headers.get('content-type')?.split(';')[0], item.contentType.split(';')[0], item.path);
+                let bytes = 0;
+                let prefixBytes = 0;
+                const prefixChunks = [];
+                const hash = createHash('sha256');
+                for await (const chunk of response.body) {
+                  bytes += chunk.length;
+                  assert.ok(bytes <= item.bytes, item.path);
+                  hash.update(chunk);
+                  if (prefixBytes < 4096) {
+                    const part = Buffer.from(chunk.subarray(0, 4096 - prefixBytes));
+                    prefixChunks.push(part);
+                    prefixBytes += part.length;
+                  }
+                }
+                assert.equal(bytes, item.bytes, item.path);
+                assert.equal(hash.digest('hex'), item.sha256, item.path);
+                const head = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(60000) });
+                assert.equal(head.status, 200, item.path);
+                assert.equal(head.headers.get('content-length'), String(item.bytes), item.path);
+                assert.equal((await head.arrayBuffer()).byteLength, 0, item.path);
+                const end = Math.min(4096, bytes) - 1;
+                const range = await fetch(url, { headers: { range: `bytes=0-${end}`, 'accept-encoding': 'identity' }, signal: AbortSignal.timeout(60000) });
+                assert.equal(range.status, 206, item.path);
+                assert.equal(range.headers.get('content-range'), `bytes 0-${end}/${bytes}`, item.path);
+                assert.deepEqual(Buffer.from(await range.arrayBuffer()), Buffer.concat(prefixChunks), item.path);
+                console.log(`PASS ${prefix}/${item.path}: ${bytes} bytes, SHA256, HEAD, Range`);
+                return { path: item.path, bytes, sha256: item.sha256, head: true, range: true, transport: 'complete-get' };
+              } catch (error) { last = error; console.log(`Retry ${item.path}: ${error.message}`); }
+            }
+            throw last;
+          }
+          try {
+            assert.equal(expected.feed.version, '0.4.0');
+            assert.equal(expected.downloads.length, 5);
+            assert.equal(expected.library.length, 10);
+            const feed = await fetch(`${origin}/updates/latest.json`, { cache: 'no-store', signal: AbortSignal.timeout(60000) });
+            assert.equal(feed.status, 200);
+            assert.match(feed.headers.get('cache-control') ?? '', /no-store/);
+            assert.deepEqual(await feed.json(), expected.feed);
+            report.feed = true;
+            const checksum = await fetch(`${origin}/checksums`, { signal: AbortSignal.timeout(60000) });
+            assert.equal(checksum.status, 200);
+            assert.deepEqual(Buffer.from(await checksum.arrayBuffer()), Buffer.from(expected.checksums, 'base64'));
+            assert.equal((await fetch(`${origin}/checksums`, { method: 'HEAD', signal: AbortSignal.timeout(60000) })).status, 200);
+            report.checksums = true;
+            const homepage = await fetch(origin, { signal: AbortSignal.timeout(60000) });
+            assert.equal(homepage.status, 200);
+            const html = await homepage.text();
+            for (const text of ['项目与画布', '复合片段', '素材与交付']) assert.ok(html.includes(text));
+            assert.doesNotMatch(html, /https?:\/\/(?:www\.)?github\.com|openfilm\.dev/i);
+            report.homepage = true;
+            const downloads = await Promise.allSettled(expected.downloads.map(async item => {
+              const verified = await verify(item, 'downloads');
+              report.downloads.push(verified);
+              return verified;
+            }));
+            for (const result of downloads) if (result.status === 'rejected') throw result.reason;
+            await save();
+            for (const item of expected.library) {
+              report.library.push(await verify(item, 'library'));
+              await save();
+            }
+            report.passed = true;
+          } catch (error) {
+            report.errors.push(error.message);
+            process.exitCode = 1;
+          } finally {
+            report.finishedAt = new Date().toISOString();
+            await save();
+            console.log(JSON.stringify(report));
+          }
+          NODE
+      - name: Preserve production verification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-release-verification
+          path: ${{ runner.temp }}/setpiece-production-verification.json
+          if-no-files-found: error
