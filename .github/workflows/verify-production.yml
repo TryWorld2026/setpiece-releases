@@ -72,7 +72,7 @@ jobs:
             throw last;
           }
           try {
-            assert.equal(expected.feed.version, '0.4.1');
+            assert.equal(expected.feed.version, '0.4.2');
             assert.equal(expected.downloads.length, 5);
             assert.equal(expected.library.length, 10);
             const feed = await fetch(`${origin}/updates/latest.json`, { cache: 'no-store', signal: AbortSignal.timeout(60000) });
