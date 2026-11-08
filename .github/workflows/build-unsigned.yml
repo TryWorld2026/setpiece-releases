@@ -6,7 +6,7 @@ on:
       tag:
         description: Private Setpiece tag to build
         required: true
-        default: v0.4.1
+        default: v0.4.2
 
 permissions:
   contents: write
@@ -63,6 +63,8 @@ jobs:
           test -s "$app/Contents/Resources/NOTICE.md"
           test -s "$app/Contents/Resources/THIRD_PARTY_NOTICES.md"
           test -s "$app/Contents/Resources/LICENSES/OpenFilm-MIT.txt"
+          test -s "$app/Contents/Resources/LICENSES/cmdk-MIT.txt"
+          test -s "$app/Contents/Resources/LICENSES/Radix-UI-MIT.txt"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$version"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$app/Contents/Info.plist")" = "Setpiece"
           hdiutil verify apps/desktop/.release/arm64/out/Setpiece-arm64.dmg
@@ -144,6 +146,8 @@ jobs:
           test -s "$app/Contents/Resources/NOTICE.md"
           test -s "$app/Contents/Resources/THIRD_PARTY_NOTICES.md"
           test -s "$app/Contents/Resources/LICENSES/OpenFilm-MIT.txt"
+          test -s "$app/Contents/Resources/LICENSES/cmdk-MIT.txt"
+          test -s "$app/Contents/Resources/LICENSES/Radix-UI-MIT.txt"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$version"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$app/Contents/Info.plist")" = "Setpiece"
           hdiutil verify apps/desktop/.release/x64/out/Setpiece-x64.dmg
@@ -245,7 +249,9 @@ jobs:
             'resources\LICENSE',
             'resources\NOTICE.md',
             'resources\THIRD_PARTY_NOTICES.md',
-            'resources\LICENSES\OpenFilm-MIT.txt'
+            'resources\LICENSES\OpenFilm-MIT.txt',
+            'resources\LICENSES\cmdk-MIT.txt',
+            'resources\LICENSES\Radix-UI-MIT.txt'
           )) {
             if (-not (Test-Path -LiteralPath (Join-Path $unpacked $file))) { throw "Missing $file" }
           }
@@ -259,8 +265,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $baseline = Join-Path $env:RUNNER_TEMP 'Setpiece-0.4.0-Setup-x64.exe'
-          Invoke-WebRequest 'https://github.com/TryWorld2026/setpiece-releases/releases/download/v0.4.0/Setpiece-Setup-x64.exe' -OutFile $baseline
+          $baseline = Join-Path $env:RUNNER_TEMP 'Setpiece-0.4.1-Setup-x64.exe'
+          Invoke-WebRequest 'https://github.com/TryWorld2026/setpiece-releases/releases/download/v0.4.1/Setpiece-Setup-x64.exe' -OutFile $baseline
           $candidate = (Resolve-Path 'apps/desktop/.release/win-x64/out/Setpiece-Setup-x64.exe').Path
           $candidateHash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash
           $version = (Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json).version
@@ -268,8 +274,8 @@ jobs:
           "SETPIECE_INSTALL_ACCEPTANCE=$work" >> $env:GITHUB_ENV
           & ./.acceptance-tools/scripts/accept-windows-installer.ps1 `
             -Baseline $baseline `
-            -BaselineSha256 870f27b72462f3fadb5ac3c82eef6dbd87ac38221f1a8a63d69ded92d5ad3525 `
-            -BaselineVersion 0.4.0 `
+            -BaselineSha256 14f6884d8f0dd4c4a26c1aab85ec6c0de825ddfb339f9dc502f4905a07e9b9c5 `
+            -BaselineVersion 0.4.1 `
             -Candidate $candidate -CandidateSha256 $candidateHash `
             -Version $version -WorkRoot $work -Execute
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -335,9 +341,58 @@ jobs:
           path: ${{ env.SETPIECE_LEGACY_ACCEPTANCE }}/installer-acceptance.json
           if-no-files-found: error
 
+  windows-040-upgrade:
+    name: Windows upgrade from 0.4.0
+    needs: windows-x64
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: TryWorld2026/setpiece-private
+          ref: 3eac50785d96835ccca00a33d7e0e1e3469d91f0
+          sparse-checkout-cone-mode: false
+          sparse-checkout: scripts/accept-windows-installer.ps1
+          ssh-key: ${{ secrets.SETPIECE_PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: unsigned-windows-x64
+          path: candidate
+      - name: Accept 040 install, upgrade and uninstall
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $baselineFolder = Join-Path $env:RUNNER_TEMP 'setpiece-040-baseline'
+          New-Item -ItemType Directory -Path $baselineFolder | Out-Null
+          gh release download v0.4.0 -R TryWorld2026/setpiece-releases --pattern Setpiece-Setup-x64.exe --dir $baselineFolder
+          if ($LASTEXITCODE -ne 0) { throw 'Legacy installer download failed' }
+          $baseline = Join-Path $baselineFolder 'Setpiece-Setup-x64.exe'
+          $candidate = (Resolve-Path 'candidate/Setpiece-Setup-x64.exe').Path
+          $candidateHash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash
+          $version = (Get-Item -LiteralPath $candidate).VersionInfo.ProductVersion
+          $work = Join-Path $env:RUNNER_TEMP ('setpiece-040-install-' + [guid]::NewGuid().ToString('N'))
+          "SETPIECE_040_ACCEPTANCE=$work" >> $env:GITHUB_ENV
+          & ./scripts/accept-windows-installer.ps1 `
+            -Baseline $baseline `
+            -BaselineSha256 870f27b72462f3fadb5ac3c82eef6dbd87ac38221f1a8a63d69ded92d5ad3525 `
+            -BaselineVersion 0.4.0 `
+            -Candidate $candidate -CandidateSha256 $candidateHash `
+            -Version $version -WorkRoot $work -Execute
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve 040 upgrade report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-040-installer-acceptance
+          path: ${{ env.SETPIECE_040_ACCEPTANCE }}/installer-acceptance.json
+          if-no-files-found: error
+
   publish:
     name: Stage reviewed installers as a draft
-    needs: [macos-arm64, macos-x64, windows-x64, windows-legacy-upgrade]
+    needs: [macos-arm64, macos-x64, windows-x64, windows-legacy-upgrade, windows-040-upgrade]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
