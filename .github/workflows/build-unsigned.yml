@@ -6,7 +6,7 @@ on:
       tag:
         description: Private Setpiece tag to build
         required: true
-        default: v0.3.3
+        default: v0.4.0
 
 permissions:
   contents: write
@@ -18,7 +18,7 @@ concurrency:
 jobs:
   macos-arm64:
     name: macOS Apple Silicon
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -36,6 +36,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: node scripts/release-preflight.mjs
+      - name: Require an Apple Silicon runner
+        run: test "$(uname -m)" = arm64
       - name: Build unsigned Apple Silicon installer
         run: pnpm --filter setpiece-desktop release --arch=arm64 --official --unsigned
       - name: Verify Apple Silicon app
@@ -44,6 +46,7 @@ jobs:
           version="$(node -p "require('./packages/openfilm/package.json').version")"
           app="apps/desktop/.release/arm64/out/mac-arm64/Setpiece.app"
           test -d "$app"
+          test "$(lipo -archs "$app/Contents/MacOS/Setpiece")" = arm64
           test ! -e "$app/Contents/Resources/app-update.yml"
           test -s "$app/Contents/Resources/LICENSE"
           test -s "$app/Contents/Resources/NOTICE.md"
@@ -52,6 +55,29 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$version"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$app/Contents/Info.plist")" = "Setpiece"
           hdiutil verify apps/desktop/.release/arm64/out/Setpiece-arm64.dmg
+      - name: Check macOS acceptance guards
+        run: node --test scripts/macos-app-acceptance.test.mjs
+      - name: Accept native Apple Silicon app from the disk image
+        shell: bash
+        run: |
+          work="$RUNNER_TEMP/setpiece-macos-arm64-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          echo "SETPIECE_MAC_ACCEPTANCE=$work" >> "$GITHUB_ENV"
+          version="$(node -p "require('./apps/desktop/package.json').version")"
+          dmg="apps/desktop/.release/arm64/out/Setpiece-arm64.dmg"
+          hash="$(shasum -a 256 "$dmg" | cut -d ' ' -f 1)"
+          node scripts/accept-macos-app.mjs \
+            --app apps/desktop/.release/arm64/out/mac-arm64/Setpiece.app \
+            --dmg "$dmg" --dmg-sha256 "$hash" --arch arm64 --version "$version" \
+            --work-root "$work" --execute
+      - name: Preserve Apple Silicon runtime acceptance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64-acceptance
+          path: |
+            ${{ env.SETPIECE_MAC_ACCEPTANCE }}/macos-acceptance.json
+            ${{ env.SETPIECE_MAC_ACCEPTANCE }}/*.png
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:
           name: unsigned-macos-arm64
@@ -62,7 +88,7 @@ jobs:
 
   macos-x64:
     name: macOS Intel
-    runs-on: macos-latest
+    runs-on: macos-15-intel
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -80,6 +106,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: node scripts/release-preflight.mjs
+      - name: Require an Intel runner
+        run: test "$(uname -m)" = x86_64
       - name: Build unsigned Intel installer
         run: pnpm --filter setpiece-desktop release --arch=x64 --official --unsigned
       - name: Verify Intel app
@@ -88,6 +116,7 @@ jobs:
           version="$(node -p "require('./packages/openfilm/package.json').version")"
           app="apps/desktop/.release/x64/out/mac/Setpiece.app"
           test -d "$app"
+          test "$(lipo -archs "$app/Contents/MacOS/Setpiece")" = x86_64
           test ! -e "$app/Contents/Resources/app-update.yml"
           test -s "$app/Contents/Resources/LICENSE"
           test -s "$app/Contents/Resources/NOTICE.md"
@@ -96,6 +125,29 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$version"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$app/Contents/Info.plist")" = "Setpiece"
           hdiutil verify apps/desktop/.release/x64/out/Setpiece-x64.dmg
+      - name: Check macOS acceptance guards
+        run: node --test scripts/macos-app-acceptance.test.mjs
+      - name: Accept native Intel app from the disk image
+        shell: bash
+        run: |
+          work="$RUNNER_TEMP/setpiece-macos-x64-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          echo "SETPIECE_MAC_ACCEPTANCE=$work" >> "$GITHUB_ENV"
+          version="$(node -p "require('./apps/desktop/package.json').version")"
+          dmg="apps/desktop/.release/x64/out/Setpiece-x64.dmg"
+          hash="$(shasum -a 256 "$dmg" | cut -d ' ' -f 1)"
+          node scripts/accept-macos-app.mjs \
+            --app apps/desktop/.release/x64/out/mac/Setpiece.app \
+            --dmg "$dmg" --dmg-sha256 "$hash" --arch x64 --version "$version" \
+            --work-root "$work" --execute
+      - name: Preserve Intel runtime acceptance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-x64-acceptance
+          path: |
+            ${{ env.SETPIECE_MAC_ACCEPTANCE }}/macos-acceptance.json
+            ${{ env.SETPIECE_MAC_ACCEPTANCE }}/*.png
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:
           name: unsigned-macos-x64
@@ -149,6 +201,35 @@ jobs:
           if (Test-Path -LiteralPath (Join-Path $unpacked 'resources\app-update.yml')) {
             throw 'Manual-update build unexpectedly contains app-update.yml'
           }
+      - name: Check installer acceptance guards
+        shell: pwsh
+        run: node --test scripts/windows-installer-acceptance.test.mjs
+      - name: Accept Windows install, upgrade and uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $feed = Invoke-RestMethod 'https://setpiece.tryworld.com.cn/updates/latest.json'
+          if ($feed.version -ne '0.3.14') { throw 'Archive the reviewed 0.3.14 baseline before proceeding.' }
+          $baseline = Join-Path $env:RUNNER_TEMP 'Setpiece-0.3.14-Setup-x64.exe'
+          Invoke-WebRequest 'https://setpiece.tryworld.com.cn/downloads/Setpiece-Setup-x64.exe' -OutFile $baseline
+          $candidate = (Resolve-Path 'apps/desktop/.release/win-x64/out/Setpiece-Setup-x64.exe').Path
+          $candidateHash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash
+          $version = (Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json).version
+          $work = Join-Path $env:RUNNER_TEMP ('setpiece-install-' + [guid]::NewGuid().ToString('N'))
+          "SETPIECE_INSTALL_ACCEPTANCE=$work" >> $env:GITHUB_ENV
+          & ./scripts/accept-windows-installer.ps1 `
+            -Baseline $baseline `
+            -BaselineSha256 f7570fea11d4fb88c44eacedfaf7bf57c24ddd7e0d2dfeb4b26be0a47ae2cb9e `
+            -Candidate $candidate -CandidateSha256 $candidateHash `
+            -Version $version -WorkRoot $work -Execute
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve Windows installer acceptance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-acceptance
+          path: ${{ env.SETPIECE_INSTALL_ACCEPTANCE }}/installer-acceptance.json
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:
           name: unsigned-windows-x64
@@ -156,7 +237,7 @@ jobs:
           path: apps/desktop/.release/win-x64/out/*.exe
 
   publish:
-    name: Publish installers
+    name: Stage reviewed installers as a draft
     needs: [macos-arm64, macos-x64, windows-x64]
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -200,7 +281,8 @@ jobs:
           EOF
           mapfile -d '' files < <(find dist -maxdepth 1 -type f -print0)
           gh release create "$TAG" "${files[@]}" \
-            --latest \
+            --draft \
             --title "Setpiece ${TAG#v} · macOS + Windows" \
             --notes-file "$RUNNER_TEMP/notes.md" \
             -R "$GITHUB_REPOSITORY"
+
