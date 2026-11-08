@@ -6,7 +6,7 @@ on:
       tag:
         description: Private Setpiece tag to build
         required: true
-        default: v0.4.0
+        default: v0.4.1
 
 permissions:
   contents: write
@@ -259,10 +259,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $feed = Invoke-RestMethod 'https://setpiece.tryworld.com.cn/updates/latest.json'
-          if ($feed.version -ne '0.3.14') { throw 'Archive the reviewed 0.3.14 baseline before proceeding.' }
-          $baseline = Join-Path $env:RUNNER_TEMP 'Setpiece-0.3.14-Setup-x64.exe'
-          Invoke-WebRequest 'https://setpiece.tryworld.com.cn/downloads/Setpiece-Setup-x64.exe' -OutFile $baseline
+          $baseline = Join-Path $env:RUNNER_TEMP 'Setpiece-0.4.0-Setup-x64.exe'
+          Invoke-WebRequest 'https://github.com/TryWorld2026/setpiece-releases/releases/download/v0.4.0/Setpiece-Setup-x64.exe' -OutFile $baseline
           $candidate = (Resolve-Path 'apps/desktop/.release/win-x64/out/Setpiece-Setup-x64.exe').Path
           $candidateHash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash
           $version = (Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json).version
@@ -270,7 +268,8 @@ jobs:
           "SETPIECE_INSTALL_ACCEPTANCE=$work" >> $env:GITHUB_ENV
           & ./.acceptance-tools/scripts/accept-windows-installer.ps1 `
             -Baseline $baseline `
-            -BaselineSha256 f7570fea11d4fb88c44eacedfaf7bf57c24ddd7e0d2dfeb4b26be0a47ae2cb9e `
+            -BaselineSha256 870f27b72462f3fadb5ac3c82eef6dbd87ac38221f1a8a63d69ded92d5ad3525 `
+            -BaselineVersion 0.4.0 `
             -Candidate $candidate -CandidateSha256 $candidateHash `
             -Version $version -WorkRoot $work -Execute
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
