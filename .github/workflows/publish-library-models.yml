@@ -1,0 +1,69 @@
+name: Verify and upload library models
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: library-458ba1e7dd7593d7
+  cancel-in-progress: false
+
+jobs:
+  models:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: library-458ba1e7dd7593d7
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Download the reviewed metadata
+        shell: bash
+        run: |
+          mkdir source verify
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" --dir source \
+            --pattern model-index.json --pattern LICENSES.txt --pattern SHA256SUMS.txt
+          cd source
+          echo '656106ec6ce96a578a2c714c06416ec3488da115452e9e45c0f8c12c4bacb970  model-index.json' | sha256sum -c -
+          echo '2cbab53efa2020aabbd4071842ccb2e2a9bc602ce75fc97ee1e9a20f1a0cd075  LICENSES.txt' | sha256sum -c -
+      - name: Retrieve identical source models and verify every byte
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE' > models.tsv
+          import { readFileSync } from 'node:fs';
+          const files = JSON.parse(readFileSync('source/model-index.json'));
+          if (files.length !== 6) throw new Error('Expected six reviewed models');
+          for (const file of files) {
+            if (!/^models\/[\w./-]+\.onnx$/.test(file.path) || file.path.includes('..') ||
+                !/^[a-f0-9]{64}$/.test(file.sha256) || file.asset !== `model-${file.sha256}.onnx` ||
+                !Number.isSafeInteger(file.bytes)) throw new Error('Invalid model metadata');
+            console.log([file.path, file.asset, file.bytes, file.sha256].join('\t'));
+          }
+          NODE
+          while IFS=$'\t' read -r path asset bytes hash; do
+            curl --fail --location --retry 4 --connect-timeout 30 --max-time 1800 \
+              "https://openfilm.dev/library/$path" -o "source/$asset"
+            test "$(stat -c %s "source/$asset")" = "$bytes"
+            echo "$hash  source/$asset" | sha256sum -c -
+            gh release upload "$TAG" "source/$asset" -R "$GITHUB_REPOSITORY"
+          done < models.tsv
+          cd source
+          sha256sum -c SHA256SUMS.txt
+      - name: Download all draft assets and check the uploaded bytes
+        shell: bash
+        run: |
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" --dir verify
+          test "$(find verify -type f | wc -l)" = 9
+          cmp source/SHA256SUMS.txt verify/SHA256SUMS.txt
+          cd verify
+          sha256sum -c SHA256SUMS.txt | tee "$RUNNER_TEMP/library-model-verification.txt"
+      - name: Preserve the model verification
+        uses: actions/upload-artifact@v4
+        with:
+          name: library-model-verification-458ba1e7dd7593d7
+          path: ${{ runner.temp }}/library-model-verification.txt
+          if-no-files-found: error
