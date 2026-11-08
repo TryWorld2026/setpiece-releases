@@ -192,12 +192,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: TryWorld2026/setpiece-private
-          ref: bd35fbb8f4af0d67523780474de789047bf73ba2
+          ref: 3eac50785d96835ccca00a33d7e0e1e3469d91f0
           path: .acceptance-tools
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             scripts/accept-windows-installer.ps1
             scripts/windows-installer-acceptance.test.mjs
+            scripts/build-windows-release.mjs
+            scripts/cached-build-archive.mjs
+            scripts/cached-build-archive.test.mjs
           ssh-key: ${{ secrets.SETPIECE_PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - uses: pnpm/action-setup@v4
@@ -209,9 +212,24 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: node scripts/release-preflight.mjs
+      - name: Download and verify the pinned Windows media runtime
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $folder = Join-Path $env:RUNNER_TEMP 'setpiece-ffmpeg-archive'
+          New-Item -ItemType Directory -Path $folder | Out-Null
+          gh release download 9.0.2 -R GyanD/codexffmpeg --pattern ffmpeg-9.0.2-essentials_build.zip --dir $folder
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned media runtime download failed' }
+          $archive = Join-Path $folder 'ffmpeg-9.0.2-essentials_build.zip'
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne '60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba') { throw 'Pinned media runtime hash mismatch' }
+          "SETPIECE_BUILD_FFMPEG_ARCHIVE=$archive" >> $env:GITHUB_ENV
+      - name: Check the cached runtime transport
+        run: node --test .acceptance-tools/scripts/cached-build-archive.test.mjs
       - name: Build unsigned Windows installer
         shell: pwsh
-        run: pnpm --filter setpiece-desktop release --platform=win --arch=x64 --official --unsigned
+        run: node .acceptance-tools/scripts/build-windows-release.mjs --platform=win --arch=x64 --official --unsigned
       - name: Verify Windows installer
         shell: pwsh
         run: |
