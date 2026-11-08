@@ -286,9 +286,58 @@ jobs:
           if-no-files-found: error
           path: apps/desktop/.release/win-x64/out/*.exe
 
+  windows-legacy-upgrade:
+    name: Windows upgrade from 0.3.14
+    needs: windows-x64
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: TryWorld2026/setpiece-private
+          ref: 3eac50785d96835ccca00a33d7e0e1e3469d91f0
+          sparse-checkout-cone-mode: false
+          sparse-checkout: scripts/accept-windows-installer.ps1
+          ssh-key: ${{ secrets.SETPIECE_PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: unsigned-windows-x64
+          path: candidate
+      - name: Accept legacy install, upgrade and uninstall
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $baselineFolder = Join-Path $env:RUNNER_TEMP 'setpiece-legacy-baseline'
+          New-Item -ItemType Directory -Path $baselineFolder | Out-Null
+          gh release download v0.3.14 -R TryWorld2026/setpiece-releases --pattern Setpiece-Setup-x64.exe --dir $baselineFolder
+          if ($LASTEXITCODE -ne 0) { throw 'Legacy installer download failed' }
+          $baseline = Join-Path $baselineFolder 'Setpiece-Setup-x64.exe'
+          $candidate = (Resolve-Path 'candidate/Setpiece-Setup-x64.exe').Path
+          $candidateHash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash
+          $version = (Get-Item -LiteralPath $candidate).VersionInfo.ProductVersion
+          $work = Join-Path $env:RUNNER_TEMP ('setpiece-legacy-install-' + [guid]::NewGuid().ToString('N'))
+          "SETPIECE_LEGACY_ACCEPTANCE=$work" >> $env:GITHUB_ENV
+          & ./scripts/accept-windows-installer.ps1 `
+            -Baseline $baseline `
+            -BaselineSha256 f7570fea11d4fb88c44eacedfaf7bf57c24ddd7e0d2dfeb4b26be0a47ae2cb9e `
+            -BaselineVersion 0.3.14 `
+            -Candidate $candidate -CandidateSha256 $candidateHash `
+            -Version $version -WorkRoot $work -Execute
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve legacy upgrade report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-legacy-installer-acceptance
+          path: ${{ env.SETPIECE_LEGACY_ACCEPTANCE }}/installer-acceptance.json
+          if-no-files-found: error
+
   publish:
     name: Stage reviewed installers as a draft
-    needs: [macos-arm64, macos-x64, windows-x64]
+    needs: [macos-arm64, macos-x64, windows-x64, windows-legacy-upgrade]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
