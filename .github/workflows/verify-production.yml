@@ -54,7 +54,7 @@ jobs:
                 }
                 assert.equal(bytes, item.bytes, item.path);
                 assert.equal(hash.digest('hex'), item.sha256, item.path);
-                const head = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(60000) });
+                const head = await fetch(url, { method: 'HEAD', headers: { 'accept-encoding': 'identity' }, signal: AbortSignal.timeout(60000) });
                 assert.equal(head.status, 200, item.path);
                 assert.equal(head.headers.get('content-length'), String(item.bytes), item.path);
                 assert.equal((await head.arrayBuffer()).byteLength, 0, item.path);
