@@ -265,8 +265,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $baseline = Join-Path $env:RUNNER_TEMP 'Setpiece-0.4.1-Setup-x64.exe'
-          Invoke-WebRequest 'https://github.com/TryWorld2026/setpiece-releases/releases/download/v0.4.1/Setpiece-Setup-x64.exe' -OutFile $baseline
+          $baseline = Join-Path $env:RUNNER_TEMP 'Setpiece-0.4.2-Setup-x64.exe'
+          Invoke-WebRequest 'https://github.com/TryWorld2026/setpiece-releases/releases/download/v0.4.2/Setpiece-Setup-x64.exe' -OutFile $baseline
           $candidate = (Resolve-Path 'apps/desktop/.release/win-x64/out/Setpiece-Setup-x64.exe').Path
           $candidateHash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash
           $version = (Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json).version
@@ -274,8 +274,8 @@ jobs:
           "SETPIECE_INSTALL_ACCEPTANCE=$work" >> $env:GITHUB_ENV
           & ./.acceptance-tools/scripts/accept-windows-installer.ps1 `
             -Baseline $baseline `
-            -BaselineSha256 14f6884d8f0dd4c4a26c1aab85ec6c0de825ddfb339f9dc502f4905a07e9b9c5 `
-            -BaselineVersion 0.4.1 `
+            -BaselineSha256 4937e245240c0b61e951a529a8fc22c712fd2a0edb089656e6448211ba6e8bbe `
+            -BaselineVersion 0.4.2 `
             -Candidate $candidate -CandidateSha256 $candidateHash `
             -Version $version -WorkRoot $work -Execute
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -390,9 +390,58 @@ jobs:
           path: ${{ env.SETPIECE_040_ACCEPTANCE }}/installer-acceptance.json
           if-no-files-found: error
 
+  windows-041-upgrade:
+    name: Windows upgrade from 0.4.1
+    needs: windows-x64
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: TryWorld2026/setpiece-private
+          ref: 3eac50785d96835ccca00a33d7e0e1e3469d91f0
+          sparse-checkout-cone-mode: false
+          sparse-checkout: scripts/accept-windows-installer.ps1
+          ssh-key: ${{ secrets.SETPIECE_PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: unsigned-windows-x64
+          path: candidate
+      - name: Accept 041 install, upgrade and uninstall
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $baselineFolder = Join-Path $env:RUNNER_TEMP 'setpiece-041-baseline'
+          New-Item -ItemType Directory -Path $baselineFolder | Out-Null
+          gh release download v0.4.1 -R TryWorld2026/setpiece-releases --pattern Setpiece-Setup-x64.exe --dir $baselineFolder
+          if ($LASTEXITCODE -ne 0) { throw 'Legacy installer download failed' }
+          $baseline = Join-Path $baselineFolder 'Setpiece-Setup-x64.exe'
+          $candidate = (Resolve-Path 'candidate/Setpiece-Setup-x64.exe').Path
+          $candidateHash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash
+          $version = (Get-Item -LiteralPath $candidate).VersionInfo.ProductVersion
+          $work = Join-Path $env:RUNNER_TEMP ('setpiece-041-install-' + [guid]::NewGuid().ToString('N'))
+          "SETPIECE_041_ACCEPTANCE=$work" >> $env:GITHUB_ENV
+          & ./scripts/accept-windows-installer.ps1 `
+            -Baseline $baseline `
+            -BaselineSha256 14f6884d8f0dd4c4a26c1aab85ec6c0de825ddfb339f9dc502f4905a07e9b9c5 `
+            -BaselineVersion 0.4.1 `
+            -Candidate $candidate -CandidateSha256 $candidateHash `
+            -Version $version -WorkRoot $work -Execute
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve 041 upgrade report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-041-installer-acceptance
+          path: ${{ env.SETPIECE_041_ACCEPTANCE }}/installer-acceptance.json
+          if-no-files-found: error
+
   publish:
     name: Stage reviewed installers as a draft
-    needs: [macos-arm64, macos-x64, windows-x64, windows-legacy-upgrade, windows-040-upgrade]
+    needs: [macos-arm64, macos-x64, windows-x64, windows-legacy-upgrade, windows-041-upgrade, windows-040-upgrade]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
